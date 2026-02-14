@@ -1,0 +1,66 @@
+# Core ML and Training Dependencies
+# Install PyTorch with CUDA support first:
+# For CUDA 11.8: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# For CUDA 12.1: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+
+# Transformers and Training
+transformers==4.39.3
+datasets>=2.14.0,<2.20.0
+peft==0.5.0
+accelerate==0.23.0
+bitsandbytes>=0.41.0,<0.43.0
+
+# HuggingFace Hub for model downloads
+huggingface_hub>=0.20.0,<0.25.0
+
+# Fix fsspec version conflict
+fsspec>=2023.1.0,<=2024.3.1
+
+# Configuration and Environment
+python-dotenv>=1.0.0
+pyyaml>=6.0.1
+
+# System Monitoring and Hardware Detection
+psutil>=5.9.0
+
+# Progress Tracking and Logging
+tqdm>=4.66.0
+rich>=13.0.0
+
+# Data Processing (Phase 2 preparation)
+numpy==1.26.4
+pandas>=2.0.0,<3.0.0
+pyarrow==14.0.1
+
+# Text Processing
+nltk>=3.8.0
+sentence-transformers>=2.2.0,<3.0.0
+
+# PDF Processing (Phase 2)
+PyPDF2>=3.0.0
+pdfplumber>=0.9.0
+pymupdf>=1.23.0
+
+# API Integration (Phase 2)
+groq>=0.4.1
+requests>=2.31.0
+tenacity>=8.2.0
+
+# Development and Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.7.0
+
+# Optional Dependencies for Advanced Features
+# Uncomment as needed:
+# tensorboard>=2.14.0          # Training monitoring
+# wandb>=0.15.0                # Experiment tracking
+# gradio>=4.0.0                # Web UI
+# streamlit>=1.28.0            # Alternative web UI
+# fastapi>=0.104.0             # API serving (Phase 4)
+# uvicorn>=0.24.0              # ASGI server (Phase 4)

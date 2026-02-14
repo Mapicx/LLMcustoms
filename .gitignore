@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# uv specific
+.uv/
+uv.lock
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# mypy
+.mypy_cache/
+
+# Pyright
+.pyright/
+
+.env
+
+
+# all the models weight 
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# HuggingFace tokenizer artifacts
+tokenizer.json
+tokenizer.model
+special_tokens_map.json
+tokenizer_config.json
+
+# Local fine-tuned models
+gemma-2-9b-it-quote-tagger-lora-local/
