@@ -51,6 +51,8 @@ htmlcov/
 *.ckpt
 *.onnx
 
+*.md
+
 # HuggingFace tokenizer artifacts
 tokenizer.json
 tokenizer.model
