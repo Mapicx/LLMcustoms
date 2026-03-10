@@ -64,12 +64,11 @@ class Gemma(BaseModel):
             return {
                 "LOAD_IN_4BIT": False,
                 "LOAD_IN_8BIT": True,
-                "BNB_4BIT_COMPUTE_DTYPE": "float16",
-                "BNB_4BIT_QUANT_TYPE": None,
+                "LLM_INT8_THRESHOLD": 6.0,  # Default threshold for outlier detection
                 "attn_implementation": "eager",
             }
 
-    def get_lora_congif(self, preset):
+    def get_lora_config(self, preset):
         if not self.is_a_supported_preset(preset):
             raise ValueError(
                 f"Unsupported preset '{preset}'. "

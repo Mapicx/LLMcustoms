@@ -1,7 +1,12 @@
 import os
-from ..core.hardware_detector import HardwareDetector
+from ..core.hardware_detector_new import HardwareDetector
+from ..models.BaseModel import BaseModel
+from ..models.gemma_9b import Gemma
+from ..models.qwen_7b import Qwen
+from ..models.Tinyllama import TinyLlama
+from ..models.phi_35 import Phi
+from ..core.model_selector import ModelSelector
 
-import os
 # os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 import torch
 import torch.nn as nn
@@ -11,60 +16,64 @@ from huggingface_hub import login
 from ..utils.config import settings
 
 class FineTuner:
-    SUPPORTED_MODELS = {
-        "phi35b": "phi 3.5b",
-        "gemma9b": "gemma 9b",
-        "tinyllama11b": "tinyllama 1.1b"
-    }
 
     SUPPORTED_PRESETS = ["highspeed", "balanced", "highquality"]
+    
+    MODEL_MAP = {
+        'gemma': Gemma,
+        'qwen': Qwen,
+        'tinyllama': TinyLlama,
+        'phi': Phi
+    }
 
-    def __init__(self, data_path: str, model: str, preset: str):
+    def __init__(self, data_path: str, model: str = 'auto', preset: str = 'auto'):
         if not os.path.exists(data_path):
             raise ValueError(f"Data path does not exist: {data_path}")
-
+        
         if not os.path.isfile(data_path):
             raise ValueError(f"Expected a file but got something else: {data_path}")
-
-        detector = HardwareDetector()
-        model_preset_dict = detector.get_runnable_models()
-
         
-        if model == "auto":
-            normalized_model = model_preset_dict["model"]
-        else:
-            normalized_model = (
-                model.replace("-", "")
-                     .replace(" ", "")
-                     .replace(".", "")
-                     .lower()
-                     .strip()
+        self.data_path = data_path
+        
+        # Validate inputs
+        if model != 'auto' and model.lower() not in self.MODEL_MAP:
+            raise ValueError(
+                f"Unsupported model '{model}'. "
+                f"Choose from {list(self.MODEL_MAP.keys())} or 'auto'"
             )
-
-            if normalized_model not in self.SUPPORTED_MODELS:
-                raise ValueError(
-                    f"Unsupported model '{model}'. Supported models are: "
-                    f"{', '.join(self.SUPPORTED_MODELS.values())}"
-                )
-
-       
-        if model == "auto":
-            self.model = model_preset_dict["model"]
-        else:
-            self.model = normalized_model
-
         
-        if preset == "auto" or preset not in self.SUPPORTED_PRESETS:
-            self.preset = model_preset_dict["preset"]
+        if preset != 'auto' and preset not in self.SUPPORTED_PRESETS:
+            raise ValueError(
+                f"Unsupported preset '{preset}'. "
+                f"Choose from {self.SUPPORTED_PRESETS} or 'auto'"
+            )
+        
+        modelselector = ModelSelector()
+        
+        if model == 'auto' and preset != 'auto':
+            supported_models = [cls() for cls in self.MODEL_MAP.values()]
+            self.model = modelselector.select_best_model(supported_models, preset)
+            self.preset = preset
+        
+        elif model != 'auto' and preset == 'auto':
+            model_instance = self.MODEL_MAP[model.lower()]()
+            self.model = model_instance
+            self.preset = modelselector.select_best_preset(model_instance)
+        
+        elif model == 'auto' and preset == 'auto':
+            model_preset = modelselector.select_best_model_and_preset()
+            self.model = list(model_preset.keys())[0]
+            self.preset = list(model_preset.values())[0]
+        
         else:
+            self.model = self.MODEL_MAP[model.lower()]()
             self.preset = preset
 
-        self.data_path = data_path
-
-        self.recommended_model = model_preset_dict["model"]
-        self.recommended_preset = model_preset_dict["preset"]
 
     def train(self):
+        # Login to HuggingFace if token is available
+        if settings.hf_token:
+            login(token=settings.hf_token)
 
         def get_torch_dtype(dtype_str: str):
             dtype_map = {
@@ -77,34 +86,37 @@ class FineTuner:
 
         from transformers import BitsAndBytesConfig
 
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=settings.load_in_4bit,
-            bnb_4bit_compute_dtype=get_torch_dtype(settings.bnb_4bit_compute_dtype),
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_quant_type=settings.bnb_4bit_quant_type
-        )
+        loading_config = self.model.get_loading_config(self.preset)
+        training_config = self.model.get_training_config(self.preset)
+        lora_config = self.model.get_lora_config(self.preset)
+
+        if loading_config['LOAD_IN_8BIT']:
+            bnb_config = BitsAndBytesConfig(
+                load_in_8bit=True,
+                llm_int8_threshold=loading_config.get('LLM_INT8_THRESHOLD', 6.0)
+            )
+        else:
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=get_torch_dtype(loading_config['BNB_4BIT_COMPUTE_DTYPE']),
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type=loading_config['BNB_4BIT_QUANT_TYPE']
+            )
+
 
         model = AutoModelForCausalLM.from_pretrained(
-            settings.model_name,
+            self.model.model_key,
             quantization_config=bnb_config,
             device_map={"": 0},  #Force everything onto GPU
-            torch_dtype=get_torch_dtype(settings.bnb_4bit_compute_dtype),
-            attn_implementation=settings.attn_implementation
+            torch_dtype=get_torch_dtype(loading_config['BNB_4BIT_COMPUTE_DTYPE']),
+            attn_implementation=loading_config['attn_implementation']
         )
 
 
-        tokenizer = AutoTokenizer.from_pretrained(settings.model_name)
+        tokenizer = AutoTokenizer.from_pretrained(self.model.model_key)
 
-        # Gemma requires a pad token
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.padding_side = "right"
-
-        # doesnt work with 4 bit quantized model since it is very unstable while training and model is splitted on CPU + GPU
-        # input_text = "Write me a poem about Machine Learning."
-        # input_ids = tokenizer(input_text, return_tensors="pt").to("cuda")
-
-        # outputs = model.generate(**input_ids, max_new_tokens=320, use_cache=False)
-        # print(tokenizer.decode(outputs[0]))
 
         """## Freezing original weights"""
 
@@ -142,10 +154,10 @@ class FineTuner:
         from peft import LoraConfig, get_peft_model
 
         config = LoraConfig(
-            r = settings.lora_r,
-            lora_alpha = settings.lora_alpha,
-            target_modules = settings.lora_target_modules,
-            lora_dropout = settings.lora_dropout,
+            r = lora_config['LORA_R'],
+            lora_alpha = lora_config['LORA_ALPHA'],
+            target_modules = lora_config['LORA_TARGET_MODULES'],
+            lora_dropout = lora_config['LORA_DROPOUT'],
             bias = "none",
             task_type = "CAUSAL_LM"
         )
@@ -159,17 +171,17 @@ class FineTuner:
         import transformers
         from datasets import load_dataset, load_from_disk
 
-        if settings.dataset_path:
-            # Local dataset (csv/json/text or HF saved dataset)
-            if settings.dataset_path.endswith(".csv"):
-                data = load_dataset("csv", data_files=settings.dataset_path)
-            elif settings.dataset_path.endswith(".json"):
-                data = load_dataset("json", data_files=settings.dataset_path)
-            else:
-                data = load_from_disk(settings.dataset_path)
+        # Use the data_path from constructor instead of settings
+        if self.data_path.endswith(".csv"):
+            data = load_dataset("csv", data_files=self.data_path)
+        elif self.data_path.endswith(".json"):
+            data = load_dataset("json", data_files=self.data_path)
+        elif os.path.isdir(self.data_path):
+            # If it's a directory, assume it's a saved HF dataset
+            data = load_from_disk(self.data_path)
         else:
-            # Hugging Face dataset
-            data = load_dataset(settings.dataset_name)
+            # Fallback: try to load as HuggingFace dataset name
+            data = load_dataset(self.data_path)
 
 
         def merge_columns(example):
@@ -203,11 +215,11 @@ class FineTuner:
             model = lora_model,
             train_dataset = data[settings.dataset_split],
             args = transformers.TrainingArguments(
-                per_device_train_batch_size = settings.batch_size,
-                gradient_accumulation_steps = settings.grad_accum_steps,
+                per_device_train_batch_size = training_config['BATCH_SIZE'],
+                gradient_accumulation_steps = training_config['GRAD_ACCUM_STEPS'],
                 warmup_steps = 10,
-                max_steps = settings.max_steps, # defines number of - (Forward pass + backward pass + weights update) means 30 times all this is done
-                learning_rate = settings.learning_rate,
+                max_steps = training_config['MAX_STEPS'], # defines number of - (Forward pass + backward pass + weights update) means 30 times all this is done
+                learning_rate = training_config['LEARNING_RATE'],
                 fp16 = True,
                 logging_steps = 1,
                 output_dir = settings.output_dir
@@ -220,7 +232,9 @@ class FineTuner:
 
         """SAVE FINE-TUNED LORA ADAPTER LOCALLY"""
 
-        save_path = os.path.join(settings.output_dir, f"{self.model}-{self.preset}-lora")
+        # Use model's display name for the save path
+        model_name = self.model.display_name.replace('/', '-').replace('\\', '-')
+        save_path = os.path.join(settings.output_dir, f"{model_name}-{self.preset}-lora")
 
         lora_model.save_pretrained(save_path)
         tokenizer.save_pretrained(save_path)

@@ -24,7 +24,7 @@ class BaseModel(ABC):
         pass
 
     @abstractmethod 
-    def get_lora_congif(self, preset):
+    def get_lora_config(self, preset):
         pass
 
     @abstractmethod
