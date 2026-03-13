@@ -6,6 +6,7 @@ from ..models.qwen_7b import Qwen
 from ..models.Tinyllama import TinyLlama
 from ..models.phi_35 import Phi
 from ..core.model_selector import ModelSelector
+from ..DataHandler.instruction_based import InstructionDataHandler
 
 # os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 import torch
@@ -26,14 +27,40 @@ class FineTuner:
         'phi': Phi
     }
 
-    def __init__(self, data_path: str, model: str = 'auto', preset: str = 'auto'):
-        if not os.path.exists(data_path):
-            raise ValueError(f"Data path does not exist: {data_path}")
+    def __init__(
+        self, 
+        data_path: str, 
+        model: str = 'auto', 
+        preset: str = 'auto',
+        training_mode: str = 'instruction',  # 'instruction', 'completion', 'chat'
+        prompt_template: str = 'alpaca',      # template for instruction formatting
+        mask_instruction: bool = True,        # whether to mask instruction during training
+        dataset_name: str = None              # HuggingFace dataset name (alternative to data_path)
+    ):
+        # Validate that either data_path or dataset_name is provided
+        if not data_path and not dataset_name:
+            raise ValueError("Either data_path or dataset_name must be provided")
         
-        if not os.path.isfile(data_path):
-            raise ValueError(f"Expected a file but got something else: {data_path}")
+        # Validate data_path if provided
+        if data_path and not dataset_name:
+            if not os.path.exists(data_path):
+                raise ValueError(f"Data path does not exist: {data_path}")
+            
+            if not os.path.isfile(data_path):
+                raise ValueError(f"Expected a file but got something else: {data_path}")
         
         self.data_path = data_path
+        self.dataset_name = dataset_name
+        self.training_mode = training_mode
+        self.prompt_template = prompt_template
+        self.mask_instruction = mask_instruction
+        
+        # Validate training mode
+        if training_mode not in ['instruction', 'completion', 'chat']:
+            raise ValueError(
+                f"Unsupported training_mode '{training_mode}'. "
+                f"Choose from ['instruction', 'completion', 'chat']"
+            )
         
         # Validate inputs
         if model != 'auto' and model.lower() not in self.MODEL_MAP:
@@ -48,8 +75,10 @@ class FineTuner:
                 f"Choose from {self.SUPPORTED_PRESETS} or 'auto'"
             )
         
+        # Initialize model selector
         modelselector = ModelSelector()
         
+        # Select model and preset
         if model == 'auto' and preset != 'auto':
             supported_models = [cls() for cls in self.MODEL_MAP.values()]
             self.model = modelselector.select_best_model(supported_models, preset)
@@ -68,6 +97,19 @@ class FineTuner:
         else:
             self.model = self.MODEL_MAP[model.lower()]()
             self.preset = preset
+        
+        # Initialize data handler based on training mode
+        if self.training_mode == 'instruction':
+            self.data_handler = InstructionDataHandler(
+                dataset_path=self.data_path,
+                dataset_name=self.dataset_name
+            )
+        elif self.training_mode == 'completion':
+            # TODO: Implement completion handler
+            raise NotImplementedError("Completion mode not yet implemented")
+        elif self.training_mode == 'chat':
+            # TODO: Implement chat handler
+            raise NotImplementedError("Chat mode not yet implemented")
 
 
     def train(self):
@@ -169,56 +211,72 @@ class FineTuner:
         """## Training data import"""
 
         import transformers
-        from datasets import load_dataset, load_from_disk
-
-        # Use the data_path from constructor instead of settings
-        if self.data_path.endswith(".csv"):
-            data = load_dataset("csv", data_files=self.data_path)
-        elif self.data_path.endswith(".json"):
-            data = load_dataset("json", data_files=self.data_path)
-        elif os.path.isdir(self.data_path):
-            # If it's a directory, assume it's a saved HF dataset
-            data = load_from_disk(self.data_path)
-        else:
-            # Fallback: try to load as HuggingFace dataset name
-            data = load_dataset(self.data_path)
-
-
-        def merge_columns(example):
-            text = example[settings.dataset_text_field]
-
-            # If a label/target column exists, append it
-            if settings.dataset_label_field and settings.dataset_label_field in example:
-                label = example[settings.dataset_label_field]
-                example["text"] = f"{text} ->: {label}"
-            else:
-                example["text"] = text
-
-            return example
-
-        data[settings.dataset_split] = data[settings.dataset_split].map(merge_columns)
-
-
-        data = data.map(
-            lambda samples: tokenizer(
-                samples["text"],
+        
+        # Load and prepare dataset using data handler
+        print("=" * 60)
+        print("Loading and preparing dataset...")
+        print("=" * 60)
+        
+        # Set special tokens for the data handler
+        self.data_handler.bos_token = tokenizer.bos_token if hasattr(tokenizer, 'bos_token') else None
+        self.data_handler.eos_token = tokenizer.eos_token
+        
+        # Load dataset
+        raw_dataset = self.data_handler.load_dataset()
+        print(f"Loaded {len(raw_dataset)} records")
+        
+        # Validate dataset
+        self.data_handler.validate_dataset(raw_dataset)
+        print("Dataset validation passed")
+        
+        # Get and print statistics
+        stats = self.data_handler.get_statistics(raw_dataset)
+        print("\nDataset Statistics:")
+        print(f"  Total records: {stats['total_records']}")
+        print(f"  Avg instruction length: {stats['avg_instruction_length']:.1f} chars")
+        print(f"  Avg response length: {stats['avg_response_length']:.1f} chars")
+        if stats['avg_context_length'] > 0:
+            print(f"  Avg context length: {stats['avg_context_length']:.1f} chars")
+        if 'category_distribution' in stats:
+            print(f"  Categories: {stats['category_distribution']}")
+        print()
+        
+        # Prepare training data (format with prompts)
+        formatted_dataset = self.data_handler.prepare_training_data(
+            dataset=raw_dataset,
+            prompt_template=self.prompt_template,
+            mask_instruction=self.mask_instruction
+        )
+        print(f"Formatted {len(formatted_dataset)} training examples")
+        
+        # Tokenize the formatted data
+        def tokenize_function(examples):
+            return tokenizer(
+                examples["text"],
                 truncation=True,
                 padding="max_length",
-                max_length=settings.max_length
-            ),
-            batched=True
+                max_length=training_config['MAX_LENGTH']
+            )
+        
+        tokenized_dataset = formatted_dataset.map(
+            tokenize_function,
+            batched=True,
+            remove_columns=formatted_dataset.column_names
         )
+        
+        print(f"Tokenized {len(tokenized_dataset)} examples")
+        print("=" * 60)
 
         """## Training"""
 
         trainer = transformers.Trainer(
             model = lora_model,
-            train_dataset = data[settings.dataset_split],
+            train_dataset = tokenized_dataset,
             args = transformers.TrainingArguments(
                 per_device_train_batch_size = training_config['BATCH_SIZE'],
                 gradient_accumulation_steps = training_config['GRAD_ACCUM_STEPS'],
                 warmup_steps = 10,
-                max_steps = training_config['MAX_STEPS'], # defines number of - (Forward pass + backward pass + weights update) means 30 times all this is done
+                max_steps = training_config['MAX_STEPS'],
                 learning_rate = training_config['LEARNING_RATE'],
                 fp16 = True,
                 logging_steps = 1,
