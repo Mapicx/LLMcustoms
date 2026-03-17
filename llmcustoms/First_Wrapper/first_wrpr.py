@@ -7,6 +7,7 @@ from ..models.Tinyllama import TinyLlama
 from ..models.phi_35 import Phi
 from ..core.model_selector import ModelSelector
 from ..DataHandler.instruction_based import InstructionDataHandler
+from ..DataHandler.chat_based import ChatDataHandler
 
 # os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 import torch
@@ -108,8 +109,10 @@ class FineTuner:
             # TODO: Implement completion handler
             raise NotImplementedError("Completion mode not yet implemented")
         elif self.training_mode == 'chat':
-            # TODO: Implement chat handler
-            raise NotImplementedError("Chat mode not yet implemented")
+            self.data_handler = ChatDataHandler(
+                dataset_path=self.data_path,
+                dataset_name=self.dataset_name
+            )
 
 
     def train(self):
@@ -233,20 +236,31 @@ class FineTuner:
         stats = self.data_handler.get_statistics(raw_dataset)
         print("\nDataset Statistics:")
         print(f"  Total records: {stats['total_records']}")
-        print(f"  Avg instruction length: {stats['avg_instruction_length']:.1f} chars")
-        print(f"  Avg response length: {stats['avg_response_length']:.1f} chars")
-        if stats['avg_context_length'] > 0:
-            print(f"  Avg context length: {stats['avg_context_length']:.1f} chars")
-        if 'category_distribution' in stats:
-            print(f"  Categories: {stats['category_distribution']}")
+        if self.training_mode == 'chat':
+            print(f"  Avg turns: {stats['avg_turns']:.1f}")
+            print(f"  Avg message length: {stats['avg_message_length']:.1f} chars")
+        else:
+            print(f"  Avg instruction length: {stats['avg_instruction_length']:.1f} chars")
+            print(f"  Avg response length: {stats['avg_response_length']:.1f} chars")
+            if stats['avg_context_length'] > 0:
+                print(f"  Avg context length: {stats['avg_context_length']:.1f} chars")
+            if 'category_distribution' in stats:
+                print(f"  Categories: {stats['category_distribution']}")
         print()
         
-        # Prepare training data (format with prompts)
-        formatted_dataset = self.data_handler.prepare_training_data(
-            dataset=raw_dataset,
-            prompt_template=self.prompt_template,
-            mask_instruction=self.mask_instruction
-        )
+        # Prepare training data
+        if self.training_mode == 'chat':
+            formatted_dataset = self.data_handler.prepare_training_data(
+                dataset=raw_dataset,
+                tokenizer=tokenizer,
+                mask_user_messages=self.mask_instruction
+            )
+        else:
+            formatted_dataset = self.data_handler.prepare_training_data(
+                dataset=raw_dataset,
+                prompt_template=self.prompt_template,
+                mask_instruction=self.mask_instruction
+            )
         print(f"Formatted {len(formatted_dataset)} training examples")
         
         # Tokenize the formatted data
