@@ -48,7 +48,7 @@ class Phi(BaseModel):
                 "LOAD_IN_8BIT": False,
                 "BNB_4BIT_COMPUTE_DTYPE": "float16",
                 "BNB_4BIT_QUANT_TYPE": "nf4",
-                "attn_implementation": "auto",
+                "attn_implementation": "eager",
             }
 
         elif preset == "balanced":
@@ -57,15 +57,15 @@ class Phi(BaseModel):
                 "LOAD_IN_8BIT": False,
                 "BNB_4BIT_COMPUTE_DTYPE": "bfloat16",
                 "BNB_4BIT_QUANT_TYPE": "nf4",
-                "attn_implementation": "auto",
+                "attn_implementation": "eager",
             }
 
         elif preset == "highquality":
             return {
                 "LOAD_IN_4BIT": False,
                 "LOAD_IN_8BIT": True,
-                "LLM_INT8_THRESHOLD": 6.0,  
-                "attn_implementation": "auto",
+                "LLM_INT8_THRESHOLD": 6.0,
+                "attn_implementation": "eager",
             }
 
     def get_lora_config(self, preset):
@@ -80,7 +80,7 @@ class Phi(BaseModel):
                 "LORA_R": 8,
                 "LORA_ALPHA": 16,
                 "LORA_DROPOUT": 0.1,
-                "LORA_TARGET_MODULES": ["q_proj", "v_proj"],
+                "LORA_TARGET_MODULES": ["qkv_proj", "o_proj"],
             }
 
         elif preset == "balanced":
@@ -88,7 +88,7 @@ class Phi(BaseModel):
                 "LORA_R": 16,
                 "LORA_ALPHA": 32,
                 "LORA_DROPOUT": 0.05,
-                "LORA_TARGET_MODULES": ["q_proj", "k_proj", "v_proj", "o_proj"],
+                "LORA_TARGET_MODULES": ["qkv_proj", "o_proj"],
             }
 
         elif preset == "highquality":
@@ -96,15 +96,7 @@ class Phi(BaseModel):
                 "LORA_R": 32,
                 "LORA_ALPHA": 64,
                 "LORA_DROPOUT": 0.03,
-                "LORA_TARGET_MODULES": [
-                        "q_proj",
-                        "k_proj",
-                        "v_proj",
-                        "o_proj",
-                        "gate_proj",
-                        "up_proj",
-                        "down_proj",
-                    ],
+                "LORA_TARGET_MODULES": ["qkv_proj", "o_proj"],
             }
 
     def get_training_config(self, preset):
